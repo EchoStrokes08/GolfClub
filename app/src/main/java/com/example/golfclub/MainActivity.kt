@@ -4,17 +4,12 @@ import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
-import androidx.compose.animation.AnimatedVisibility
-import androidx.compose.animation.fadeIn
-import androidx.compose.animation.fadeOut
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
@@ -26,7 +21,6 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -35,7 +29,15 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import com.example.golfclub.ui.theme.GolfClubTheme
+import androidx.lifecycle.viewmodel.compose.viewModel
 
+import java.text.SimpleDateFormat
+import java.util.*
+
+// ──── Importacion de enums y data class  ───────────────────────────────────────
+import com.example.golfclub.models.Estado
+import com.example.golfclub.models.Reserva
+import com.example.golfclub.viewmodel.ReservaViewModel
 // ─── Colores ────────────────────────────────────────────────────────────────
 val Navy        = Color(0xFF0D1F3C)
 val NavyLight   = Color(0xFF162B50)
@@ -50,30 +52,49 @@ val BlueAccent  = Color(0xFF60A5FA)
 val PurpleAccent= Color(0xFFA78BFA)
 val RedAccent   = Color(0xFFF87171)
 
-// ─── Modelos de datos (sin Room, en memoria) ──────────────────────────────
-enum class Estado { ACTIVA, CANCELADA, COMPLETADA }
 
-data class Reserva(
-    val id: Int,
-    val cliente: String,
-    val cancha: String,
-    val fecha: String,
-    val hora: String,
-    val estado: Estado = Estado.ACTIVA
-)
 
 val canchas = listOf("Cancha 1", "Cancha 2", "Cancha 3", "Cancha 4", "Cancha 5")
 val horas   = (7..20).flatMap { h -> listOf("%02d:00".format(h), "%02d:30".format(h)) }
 
 // Datos de muestra
+/*
 val reservasMuestra = mutableListOf(
     Reserva(1, "Carlos López",   "Cancha 1", "20/03/2026", "09:00", Estado.ACTIVA),
     Reserva(2, "Ana Martínez",   "Cancha 3", "20/03/2026", "11:30", Estado.COMPLETADA),
     Reserva(3, "Pedro Gómez",    "Cancha 2", "21/03/2026", "08:00", Estado.ACTIVA),
     Reserva(4, "Laura Ríos",     "Cancha 4", "21/03/2026", "15:00", Estado.CANCELADA),
     Reserva(5, "Sergio Torres",  "Cancha 1", "22/03/2026", "10:00", Estado.ACTIVA),
-)
+) */
 
+
+fun esFechaValida(fecha: String): Boolean {
+    return try {
+        val sdf = SimpleDateFormat("dd/MM/yyyy", Locale.getDefault())
+        sdf.isLenient = false
+        sdf.parse(fecha)
+        true
+    } catch (e: Exception) {
+        false
+    }
+}
+
+fun esFechaPasada(fecha: String): Boolean {
+    return try {
+        val sdf = SimpleDateFormat("dd/MM/yyyy", Locale.getDefault())
+        val fechaIngresada = sdf.parse(fecha)
+
+        val hoy = Calendar.getInstance()
+        hoy.set(Calendar.HOUR_OF_DAY, 0)
+        hoy.set(Calendar.MINUTE, 0)
+        hoy.set(Calendar.SECOND, 0)
+        hoy.set(Calendar.MILLISECOND, 0)
+
+        fechaIngresada.before(hoy.time)
+    } catch (e: Exception) {
+        true
+    }
+}
 // ─── MainActivity ────────────────────────────────────────────────────────────
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -90,10 +111,9 @@ class MainActivity : ComponentActivity() {
 // ─── App raíz ─────────────────────────────────────────────────────────────
 @Composable
 fun GolfApp() {
-    var tabActual by remember { mutableStateOf(0) }  // 0=Resumen, 1=Reservas
-    var reservas  by remember { mutableStateOf(reservasMuestra.toList()) }
-    var nextId    by remember { mutableStateOf(reservasMuestra.size + 1) }
-
+    var tabActual by remember { mutableIntStateOf(0) }  // 0=Resumen, 1=Reservas
+    val viewModel: ReservaViewModel = viewModel()
+    val reservas by viewModel.reservas.collectAsState()
     // Dialogs
     var mostrarFormulario by remember { mutableStateOf(false) }
     var reservaAEditar    by remember { mutableStateOf<Reserva?>(null) }
@@ -101,7 +121,6 @@ fun GolfApp() {
 
     // Snackbar
     val snackbarHostState = remember { SnackbarHostState() }
-    val scope = rememberCoroutineScope()
 
     Scaffold(
         containerColor = Navy,
@@ -162,10 +181,10 @@ fun GolfApp() {
             reservaExistente = reservaAEditar,
             reservasActuales = reservas,
             onGuardar = { nueva ->
-                reservas = if (reservaAEditar != null) {
-                    reservas.map { if (it.id == nueva.id) nueva else it }
+                if (reservaAEditar != null) {
+                    viewModel.actualizar(nueva)
                 } else {
-                    reservas + nueva.copy(id = nextId++)
+                    viewModel.insertar(nueva)
                 }
                 mostrarFormulario = false
             },
@@ -184,7 +203,7 @@ fun GolfApp() {
             text  = { Text("¿Eliminar la reserva de ${r.cliente} en ${r.cancha}?") },
             confirmButton = {
                 TextButton(onClick = {
-                    reservas = reservas.filter { it.id != r.id }
+                    viewModel.eliminar(r)
                     reservaAEliminar = null
                 }) { Text("Eliminar", color = RedAccent, fontWeight = FontWeight.SemiBold) }
             },
@@ -457,7 +476,7 @@ fun FormularioDialog(
                 isError     = errorFecha || errorConfl,
                 placeholder = "Ej: 20/03/2026"
             )
-            if (errorFecha) ErrorText("Ingresa una fecha válida")
+            if (errorFecha) ErrorText("Fecha inválida o anterior a hoy, por favor ingrese una fecha valida")
 
             // Hora
             DropdownField("Hora", hora, Icons.Default.Schedule, horas, exHora,
@@ -508,9 +527,13 @@ fun FormularioDialog(
                 Button(
                     onClick = {
                         errorNombre = nombre.isBlank()
-                        errorFecha  = fecha.isBlank()
+                        errorFecha  = !esFechaValida(fecha) || esFechaPasada(fecha)
                         if (errorNombre || errorFecha) return@Button
-
+                        // No permitir activar reservas en fechas pasadas
+                        if (estado == Estado.ACTIVA && esFechaPasada(fecha)) {
+                            errorFecha = true
+                            return@Button
+                        }
                         // Validar conflicto
                         val conflicto = reservasActuales.any { r ->
                             r.cancha == cancha &&
